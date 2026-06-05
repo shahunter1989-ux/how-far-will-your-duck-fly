@@ -26,8 +26,8 @@ const SUPABASE_ANON_KEY = "";
 const SCORE_FUNCTION_URL = "";
 
 const RULES = {
-  ascendTapRate: 4,
-  maxAscendTapRate: 6,
+  ascendTapRate: 5,
+  maxAscendTapRate: 8,
   descendMinTapRate: 1,
   tapWindowMs: 1000,
   fallAfterMs: 750,
@@ -469,7 +469,7 @@ function resetGame(startNow = false) {
   } else {
     showPanel(
       "How Far Will Your Duck Fly by Wulfzxx.underground",
-      "Keep at least 4 taps per second to climb. Higher altitude needs faster tapping, up to 6 taps per second.",
+      "Keep at least 5 taps per second to climb. Higher altitude needs faster tapping, up to 8 taps per second.",
       "Start"
     );
   }
