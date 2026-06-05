@@ -5,14 +5,29 @@ const ui = {
   score: document.getElementById("score"),
   altitude: document.getElementById("altitude"),
   tapRate: document.getElementById("tap-rate"),
+  neededRate: document.getElementById("needed-rate"),
+  scoreboard: document.getElementById("scoreboard"),
+  finalScore: document.getElementById("final-score"),
+  finalPeak: document.getElementById("final-peak"),
+  nicknameInput: document.getElementById("nickname-input"),
+  scoreboardStatus: document.getElementById("scoreboard-status"),
+  dailyBoard: document.getElementById("daily-board"),
+  weeklyBoard: document.getElementById("weekly-board"),
+  submitScore: document.getElementById("submit-score"),
+  scoreboardRestart: document.getElementById("scoreboard-restart"),
   panel: document.getElementById("status-panel"),
   title: document.getElementById("state-title"),
   message: document.getElementById("state-message"),
   restart: document.getElementById("restart"),
 };
 
+const SUPABASE_URL = "";
+const SUPABASE_ANON_KEY = "";
+const SCORE_FUNCTION_URL = "";
+
 const RULES = {
   ascendTapRate: 4,
+  maxAscendTapRate: 6,
   descendMinTapRate: 1,
   tapWindowMs: 1000,
   fallAfterMs: 750,
@@ -24,6 +39,48 @@ const RULES = {
   scoreHeightMultiplier: 0.12,
 };
 
+const CLOUDS = [
+  { x: 0.14, y: 0.18, scale: 0.9, drift: 0.82 },
+  { x: 0.72, y: 0.12, scale: 1.18, drift: 1.08 },
+  { x: 0.42, y: 0.33, scale: 0.72, drift: 0.92 },
+  { x: 0.82, y: 0.48, scale: 0.96, drift: 1.16 },
+  { x: 0.22, y: 0.65, scale: 1.28, drift: 1.0 },
+  { x: 0.58, y: 0.81, scale: 0.78, drift: 1.22 },
+];
+
+const DUCK_SOURCE = {
+  anchorX: 650,
+  anchorY: 620,
+};
+
+const DUCK_ASSETS = {
+  body: {
+    src: "assets/duck-body.png",
+    x: 235,
+    y: 168,
+    width: 936,
+    height: 874,
+  },
+  backWing: {
+    src: "assets/duck-wing-back.png",
+    x: 176,
+    y: 169,
+    width: 515,
+    height: 590,
+    pivotX: 625,
+    pivotY: 585,
+  },
+  frontWing: {
+    src: "assets/duck-wing-front.png",
+    x: 407,
+    y: 237,
+    width: 362,
+    height: 507,
+    pivotX: 675,
+    pivotY: 595,
+  },
+};
+
 const state = {
   mode: "ready",
   altitude: 18,
@@ -32,12 +89,350 @@ const state = {
   taps: [],
   lastTapAt: 0,
   tapRate: 0,
-  duckTilt: 0,
-  rippleClock: 0,
+  requiredAscendTapRate: RULES.ascendTapRate,
+  verticalVelocity: 0,
+  flapClock: 0,
+  flapPower: 0,
+  flightClock: 0,
+  skyOffset: 0,
+};
+
+const scoreboard = {
+  deviceId: "",
+  nickname: "",
+  dailyPeriodKey: "",
+  weeklyPeriodKey: "",
+  todayBest: 0,
+  weekBest: 0,
+  dailyTop: [],
+  weeklyTop: [],
+  pendingScore: 0,
+  pendingPeakAltitude: 0,
+  hasSubmittedCurrentScore: false,
+  status: "Scoreboard offline",
+};
+
+const STORAGE_KEYS = {
+  deviceId: "duckFlap.deviceId",
+  nickname: "duckFlap.nickname",
+  bestPrefix: "duckFlap.best",
 };
 
 let lastFrame = performance.now();
 let view = { width: 720, height: 1080, dpr: 1 };
+
+function initDuckAssets() {
+  for (const layer of Object.values(DUCK_ASSETS)) {
+    const image = new Image();
+    layer.image = image;
+    layer.ready = false;
+    image.onload = () => {
+      layer.ready = true;
+    };
+    image.src = layer.src;
+  }
+}
+
+function areDuckAssetsReady() {
+  return Object.values(DUCK_ASSETS).every((layer) => layer.ready);
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function getRequiredAscendTapRate(altitude) {
+  const altitudeRatio = clamp(altitude / RULES.maxAltitude, 0, 1);
+  return clamp(
+    RULES.ascendTapRate +
+      altitudeRatio * (RULES.maxAscendTapRate - RULES.ascendTapRate),
+    RULES.ascendTapRate,
+    RULES.maxAscendTapRate
+  );
+}
+
+function isSupabaseConfigured() {
+  return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY && SCORE_FUNCTION_URL);
+}
+
+function storageGet(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function storageSet(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // The game can still run if storage is unavailable.
+  }
+}
+
+function createDeviceId() {
+  if (window.crypto && window.crypto.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+  return `duck-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function sanitizeNickname(value, fallback) {
+  const cleaned = String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 18);
+  return cleaned || fallback;
+}
+
+function defaultNickname(deviceId) {
+  return `Duck ${deviceId.slice(-4).toUpperCase()}`;
+}
+
+function getLocalDateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getLocalMondayKey(date = new Date()) {
+  const monday = new Date(date);
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+  return getLocalDateKey(monday);
+}
+
+function bestStorageKey(periodType, periodKey) {
+  return `${STORAGE_KEYS.bestPrefix}.${periodType}.${periodKey}.${scoreboard.deviceId}`;
+}
+
+function loadLocalBest(periodType, periodKey) {
+  return Number(storageGet(bestStorageKey(periodType, periodKey)) || 0);
+}
+
+function saveLocalBest(periodType, periodKey, score) {
+  storageSet(bestStorageKey(periodType, periodKey), String(score));
+}
+
+function updatePeriodKeys() {
+  scoreboard.dailyPeriodKey = getLocalDateKey();
+  scoreboard.weeklyPeriodKey = getLocalMondayKey();
+}
+
+function ensurePlayerIdentity() {
+  let deviceId = storageGet(STORAGE_KEYS.deviceId);
+  if (!deviceId) {
+    deviceId = createDeviceId();
+    storageSet(STORAGE_KEYS.deviceId, deviceId);
+  }
+
+  scoreboard.deviceId = deviceId;
+
+  let nickname = storageGet(STORAGE_KEYS.nickname);
+  if (!nickname) {
+    nickname = defaultNickname(deviceId);
+    storageSet(STORAGE_KEYS.nickname, nickname);
+  }
+
+  scoreboard.nickname = sanitizeNickname(nickname, defaultNickname(deviceId));
+}
+
+function saveNicknameFromInput() {
+  const nickname = sanitizeNickname(ui.nicknameInput.value, scoreboard.nickname);
+  scoreboard.nickname = nickname;
+  storageSet(STORAGE_KEYS.nickname, nickname);
+  updateScoreboardUI();
+}
+
+function setScoreboardStatus(message) {
+  scoreboard.status = message;
+  ui.scoreboardStatus.textContent = message;
+}
+
+function updatePersonalBests() {
+  scoreboard.todayBest = loadLocalBest("daily", scoreboard.dailyPeriodKey);
+  scoreboard.weekBest = loadLocalBest("weekly", scoreboard.weeklyPeriodKey);
+}
+
+function renderBoard(list, rows) {
+  list.innerHTML = "";
+  const entries = rows.slice(0, 3);
+
+  if (!entries.length) {
+    const empty = document.createElement("li");
+    empty.textContent = "No scores yet";
+    list.appendChild(empty);
+    return;
+  }
+
+  for (const row of entries) {
+    const item = document.createElement("li");
+    item.textContent = `${row.nickname || "Duck"} ${Number(row.score) || 0}`;
+    list.appendChild(item);
+  }
+}
+
+function updateScoreboardUI() {
+  ui.finalScore.textContent = scoreboard.pendingScore.toString();
+  ui.finalPeak.textContent = scoreboard.pendingPeakAltitude.toString();
+  if (document.activeElement !== ui.nicknameInput) {
+    ui.nicknameInput.value = scoreboard.nickname;
+  }
+  ui.scoreboardStatus.textContent = scoreboard.status;
+  ui.submitScore.disabled = scoreboard.hasSubmittedCurrentScore;
+  renderBoard(ui.dailyBoard, scoreboard.dailyTop);
+  renderBoard(ui.weeklyBoard, scoreboard.weeklyTop);
+}
+
+async function fetchLeaderboard(periodType, periodKey) {
+  const url = new URL(`${SUPABASE_URL.replace(/\/$/, "")}/rest/v1/leaderboard_scores`);
+  url.searchParams.set("select", "nickname,score,peak_altitude,played_at");
+  url.searchParams.set("period_type", `eq.${periodType}`);
+  url.searchParams.set("period_key", `eq.${periodKey}`);
+  url.searchParams.set("order", "score.desc,played_at.asc");
+  url.searchParams.set("limit", "3");
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Leaderboard read failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+async function refreshOnlineScoreboard() {
+  updatePeriodKeys();
+  updatePersonalBests();
+
+  if (!isSupabaseConfigured()) {
+    setScoreboardStatus("Scoreboard offline");
+    updateScoreboardUI();
+    return;
+  }
+
+  try {
+    setScoreboardStatus("Loading scores");
+    const [dailyTop, weeklyTop] = await Promise.all([
+      fetchLeaderboard("daily", scoreboard.dailyPeriodKey),
+      fetchLeaderboard("weekly", scoreboard.weeklyPeriodKey),
+    ]);
+    scoreboard.dailyTop = dailyTop;
+    scoreboard.weeklyTop = weeklyTop;
+    setScoreboardStatus("Online scoreboard");
+  } catch {
+    setScoreboardStatus("Scoreboard offline");
+  }
+
+  updateScoreboardUI();
+}
+
+async function submitScore(score, peakAltitude) {
+  saveNicknameFromInput();
+  updatePeriodKeys();
+
+  const dailyBest = loadLocalBest("daily", scoreboard.dailyPeriodKey);
+  const weeklyBest = loadLocalBest("weekly", scoreboard.weeklyPeriodKey);
+  const improvedDaily = score > dailyBest;
+  const improvedWeekly = score > weeklyBest;
+
+  if (improvedDaily) {
+    saveLocalBest("daily", scoreboard.dailyPeriodKey, score);
+  }
+
+  if (improvedWeekly) {
+    saveLocalBest("weekly", scoreboard.weeklyPeriodKey, score);
+  }
+
+  updatePersonalBests();
+  updateScoreboardUI();
+
+  if (!isSupabaseConfigured()) {
+    setScoreboardStatus(improvedDaily || improvedWeekly ? "Saved on device" : "Scoreboard offline");
+    scoreboard.hasSubmittedCurrentScore = true;
+    updateScoreboardUI();
+    return;
+  }
+
+  if (!improvedDaily && !improvedWeekly) {
+    setScoreboardStatus("Score did not beat your best");
+    scoreboard.hasSubmittedCurrentScore = true;
+    updateScoreboardUI();
+    return;
+  }
+
+  try {
+    setScoreboardStatus("Uploading score");
+    updateScoreboardUI();
+
+    const response = await fetch(SCORE_FUNCTION_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({
+        score,
+        peakAltitude,
+        deviceId: scoreboard.deviceId,
+        nickname: scoreboard.nickname,
+        dailyPeriodKey: scoreboard.dailyPeriodKey,
+        weeklyPeriodKey: scoreboard.weeklyPeriodKey,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Score upload failed: ${response.status}`);
+    }
+
+    const result = await response.json();
+    scoreboard.dailyTop = result.dailyTop || [];
+    scoreboard.weeklyTop = result.weeklyTop || [];
+    scoreboard.todayBest = Number(result.personalBests?.daily ?? scoreboard.todayBest);
+    scoreboard.weekBest = Number(result.personalBests?.weekly ?? scoreboard.weekBest);
+    scoreboard.hasSubmittedCurrentScore = true;
+    setScoreboardStatus("Score uploaded");
+  } catch {
+    setScoreboardStatus("Upload failed; saved on device");
+    await refreshOnlineScoreboard();
+    scoreboard.hasSubmittedCurrentScore = true;
+  }
+
+  updateScoreboardUI();
+}
+
+function initScoreboard() {
+  ensurePlayerIdentity();
+  updatePeriodKeys();
+  updatePersonalBests();
+  updateScoreboardUI();
+}
+
+function showScoreboard(finalScore, peakAltitude) {
+  scoreboard.pendingScore = finalScore;
+  scoreboard.pendingPeakAltitude = peakAltitude;
+  scoreboard.hasSubmittedCurrentScore = false;
+  scoreboard.nickname = sanitizeNickname(
+    storageGet(STORAGE_KEYS.nickname),
+    defaultNickname(scoreboard.deviceId)
+  );
+  setScoreboardStatus(isSupabaseConfigured() ? "Ready to submit" : "Scoreboard offline");
+  ui.scoreboard.classList.remove("is-hidden");
+  updateScoreboardUI();
+  void refreshOnlineScoreboard();
+}
+
+function hideScoreboard() {
+  ui.scoreboard.classList.add("is-hidden");
+}
 
 function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -60,15 +455,21 @@ function resetGame(startNow = false) {
   state.taps = [];
   state.lastTapAt = 0;
   state.tapRate = 0;
-  state.duckTilt = 0;
-  state.rippleClock = 0;
+  state.requiredAscendTapRate = getRequiredAscendTapRate(state.altitude);
+  state.verticalVelocity = 0;
+  state.flapClock = 0;
+  state.flapPower = 0;
+  state.flightClock = 0;
+  state.skyOffset = 0;
+  hideScoreboard();
+
   if (startNow) {
     registerTap();
     hidePanel();
   } else {
     showPanel(
-      "How Far Will Your Duck Flap?",
-      "Keep at least 4 taps per second to climb. Between 1 and 3 taps per second, the duck descends. Stop tapping and it drops fast.",
+      "How Far Will Your Duck Fly by Wulfzxx.underground",
+      "Keep at least 4 taps per second to climb. Higher altitude needs faster tapping, up to 6 taps per second.",
       "Start"
     );
   }
@@ -87,14 +488,25 @@ function hidePanel() {
 
 function registerTap() {
   const now = performance.now();
-  if (state.mode === "ready" || state.mode === "gameover") {
+  if (state.mode === "ready") {
     resetGame(true);
+    return;
+  }
+
+  if (state.mode === "landed") {
     return;
   }
 
   state.taps.push(now);
   state.lastTapAt = now;
-  state.duckTilt = Math.min(1, state.duckTilt + 0.22);
+  state.flapPower = Math.min(1, state.flapPower + 0.34);
+}
+
+function handlePointerDown(event) {
+  if (event.target.closest(".scoreboard, .status-panel")) {
+    return;
+  }
+  registerTap();
 }
 
 function updateTapRate(now) {
@@ -107,32 +519,43 @@ function updateTapRate(now) {
 
 function simulate(dt, now) {
   updateTapRate(now);
-  state.rippleClock += dt;
-  state.duckTilt *= Math.pow(0.04, dt);
+
+  const timeSinceTap = now - state.lastTapAt;
+  const hasStoppedFlapping = timeSinceTap > RULES.fallAfterMs;
+  state.requiredAscendTapRate = getRequiredAscendTapRate(state.altitude);
+  const tapEnergy = clamp(state.tapRate / state.requiredAscendTapRate, 0, 1.5);
+  const targetFlapPower = hasStoppedFlapping ? 0 : clamp(tapEnergy, 0.16, 1);
+
+  state.flightClock += dt;
+  state.flapPower += (targetFlapPower - state.flapPower) * Math.min(1, dt * 7);
+  state.flapClock += dt * (7.5 + state.tapRate * 2.4) * (0.35 + state.flapPower);
 
   if (state.mode !== "playing") {
+    state.verticalVelocity = 0;
+    state.skyOffset += dt * 18;
     return;
   }
 
-  const timeSinceTap = now - state.lastTapAt;
-  let verticalVelocity;
-
-  if (timeSinceTap > RULES.fallAfterMs) {
-    verticalVelocity = -RULES.fallPerSecond;
-  } else if (state.tapRate >= RULES.ascendTapRate) {
-    verticalVelocity =
+  if (hasStoppedFlapping) {
+    state.verticalVelocity = -RULES.fallPerSecond;
+  } else if (state.tapRate >= state.requiredAscendTapRate) {
+    state.verticalVelocity =
       RULES.baseClimbPerSecond +
-      (state.tapRate - RULES.ascendTapRate) * RULES.extraClimbPerTap;
+      (state.tapRate - state.requiredAscendTapRate) * RULES.extraClimbPerTap;
   } else if (state.tapRate >= RULES.descendMinTapRate) {
-    verticalVelocity = -RULES.slowDescentPerSecond;
+    state.verticalVelocity = -RULES.slowDescentPerSecond;
   } else {
-    verticalVelocity = -RULES.fallPerSecond * 0.78;
+    state.verticalVelocity = -RULES.fallPerSecond * 0.78;
   }
 
   state.altitude = Math.min(
     RULES.maxAltitude,
-    state.altitude + verticalVelocity * dt
+    state.altitude + state.verticalVelocity * dt
   );
+
+  const climbMotion = Math.max(20, Math.abs(state.verticalVelocity) * 0.74);
+  const altitudeMotion = state.altitude * 0.18;
+  state.skyOffset += dt * (climbMotion + altitudeMotion);
 
   if (state.altitude > state.bestHeight) {
     state.bestHeight = state.altitude;
@@ -142,118 +565,251 @@ function simulate(dt, now) {
 
   if (state.altitude <= 0) {
     state.altitude = 0;
-    state.mode = "gameover";
-    showPanel(
-      "Splashdown",
-      `Final score ${Math.floor(state.score)}. Peak altitude ${Math.floor(state.bestHeight)} m.`,
-      "Play Again"
-    );
+    state.mode = "landed";
+    state.flapPower = 0;
+    const finalScore = Math.floor(state.score);
+    const peakAltitude = Math.floor(state.bestHeight);
+    hidePanel();
+    showScoreboard(finalScore, peakAltitude);
   }
 }
 
-function drawPond() {
+function drawSky() {
   const { width, height } = view;
+  const altitudeRatio = state.altitude / RULES.maxAltitude;
   const gradient = ctx.createLinearGradient(0, 0, 0, height);
-  gradient.addColorStop(0, "#116979");
-  gradient.addColorStop(0.52, "#0d5666");
-  gradient.addColorStop(1, "#173f35");
+
+  gradient.addColorStop(0, "#45aef4");
+  gradient.addColorStop(0.48, "#8bd7ff");
+  gradient.addColorStop(1, "#e4f8ff");
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, width, height);
 
-  ctx.save();
-  ctx.globalAlpha = 0.34;
-  for (let i = 0; i < 15; i += 1) {
-    const x = ((i * 137 + state.rippleClock * 18) % (width + 120)) - 60;
-    const y = ((i * 223 + Math.sin(state.rippleClock + i) * 26) % height);
-    ctx.strokeStyle = i % 2 ? "#9bd9d0" : "#f1c76c";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.ellipse(x, y, 42 + (i % 4) * 15, 10 + (i % 3) * 6, -0.25, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-  ctx.restore();
-
-  drawReeds(width * 0.08, height * 0.72, 1);
-  drawReeds(width * 0.9, height * 0.38, -1);
+  drawClouds(width, height, altitudeRatio);
+  drawSpeedLines(width, height);
+  drawGround(width, height, altitudeRatio);
 }
 
-function drawReeds(x, y, direction) {
+function drawClouds(width, height, altitudeRatio) {
+  ctx.save();
+  ctx.globalAlpha = 0.88;
+
+  for (const cloud of CLOUDS) {
+    const travel = (state.skyOffset * cloud.drift) % (height + 180);
+    const x = cloud.x * width + Math.sin(state.flightClock * cloud.drift) * 18;
+    const y = ((cloud.y * height + travel) % (height + 180)) - 120;
+    const scale = cloud.scale * (0.82 + altitudeRatio * 0.18);
+    drawCloud(x, y, scale);
+  }
+
+  ctx.restore();
+}
+
+function drawCloud(x, y, scale) {
   ctx.save();
   ctx.translate(x, y);
-  ctx.lineCap = "round";
-  for (let i = 0; i < 9; i += 1) {
-    const offset = i * 8 * direction;
-    ctx.strokeStyle = "#2f6f46";
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(offset, 86);
-    ctx.quadraticCurveTo(offset + 12 * direction, 35, offset + 4 * direction, 0);
-    ctx.stroke();
-    ctx.fillStyle = "#b16d35";
-    ctx.fillRect(offset - 4, -8, 8, 26);
+  ctx.scale(scale, scale);
+  ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
+  ctx.beginPath();
+  ctx.ellipse(-42, 12, 42, 22, 0, 0, Math.PI * 2);
+  ctx.ellipse(-8, -2, 38, 29, 0, 0, Math.PI * 2);
+  ctx.ellipse(30, 10, 48, 24, 0, 0, Math.PI * 2);
+  ctx.ellipse(62, 16, 28, 18, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawSpeedLines(width, height) {
+  const intensity = clamp((Math.abs(state.verticalVelocity) - 12) / 70, 0, 1);
+  if (intensity <= 0.02) {
+    return;
   }
+
+  ctx.save();
+  ctx.globalAlpha = 0.18 * intensity;
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 2;
+  ctx.lineCap = "round";
+
+  for (let i = 0; i < 12; i += 1) {
+    const x = ((i * 79 + state.skyOffset * 0.42) % (width + 80)) - 40;
+    const y = ((i * 163 + state.skyOffset * 1.7) % (height + 140)) - 70;
+    const length = 28 + intensity * 42 + (i % 3) * 9;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x - 10, y + length);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function drawGround(width, height, altitudeRatio) {
+  const lowAltitude = clamp(1 - state.altitude / 34, 0, 1);
+  const groundHeight = 34 + lowAltitude * height * 0.26;
+  const horizonY = height - groundHeight;
+
+  ctx.save();
+  ctx.fillStyle = `rgba(80, 183, 90, ${0.22 + lowAltitude * 0.7})`;
+  ctx.beginPath();
+  ctx.moveTo(0, height);
+  ctx.lineTo(0, horizonY + 24);
+  ctx.quadraticCurveTo(width * 0.24, horizonY - 18, width * 0.48, horizonY + 10);
+  ctx.quadraticCurveTo(width * 0.75, horizonY + 38, width, horizonY - 4);
+  ctx.lineTo(width, height);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = `rgba(51, 136, 68, ${0.12 + lowAltitude * 0.52})`;
+  for (let i = 0; i < 10; i += 1) {
+    const x = (i / 9) * width;
+    const y = horizonY + 20 + Math.sin(i * 1.7) * 18;
+    ctx.beginPath();
+    ctx.ellipse(x, y, 70, 20, -0.18, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  if (altitudeRatio < 0.16) {
+    ctx.fillStyle = `rgba(80, 53, 30, ${(0.16 - altitudeRatio) * 2.2})`;
+    ctx.fillRect(0, height - 12, width, 12);
+  }
+
   ctx.restore();
 }
 
 function drawDuck() {
   const { width, height } = view;
   const altitudeRatio = state.altitude / RULES.maxAltitude;
-  const x = width * 0.5 + Math.sin(state.rippleClock * 1.6) * 18;
-  const y = height * 0.52 + Math.cos(state.rippleClock * 1.1) * 10;
-  const scale = Math.min(width, height) / 380;
-  const duckScale = scale * (0.86 + altitudeRatio * 0.34);
-  const shadowScale = scale * (1.25 - altitudeRatio * 0.7);
-  const liftOffset = altitudeRatio * 26;
+  const fallRatio = clamp(-state.verticalVelocity / RULES.fallPerSecond, 0, 1);
+  const flapWave = Math.sin(state.flapClock);
+  const x = width * 0.5;
+  const y =
+    height * 0.5 -
+    altitudeRatio * height * 0.12 +
+    Math.sin(state.flightClock * 2.2) * (5 + state.flapPower * 7);
+  const shadowScale = Math.min(width, height) / 410;
+  const duckScale = (Math.min(width, height) / 2250) * (0.95 + altitudeRatio * 0.12);
+  const tilt = state.mode === "landed"
+    ? 0
+    : -0.08 - state.flapPower * 0.08 + fallRatio * 0.38;
+
+  drawDuckShadow(x, height, shadowScale, altitudeRatio);
 
   ctx.save();
-  ctx.translate(x, y + 24);
-  ctx.scale(shadowScale, shadowScale);
-  ctx.fillStyle = `rgba(3, 10, 12, ${0.44 - altitudeRatio * 0.26})`;
-  ctx.beginPath();
-  ctx.ellipse(0, 0, 54, 20, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-
-  ctx.save();
-  ctx.translate(x, y - liftOffset);
-  ctx.rotate(Math.sin(state.duckTilt * Math.PI) * -0.16);
+  ctx.translate(x, y);
+  ctx.rotate(tilt);
   ctx.scale(duckScale, duckScale);
 
-  ctx.fillStyle = "#ffd257";
-  ctx.beginPath();
-  ctx.ellipse(0, 0, 54, 39, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.fillStyle = "#f2b93c";
-  ctx.beginPath();
-  ctx.ellipse(-24, 7, 26, 17, -0.35, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.fillStyle = "#ffe188";
-  ctx.beginPath();
-  ctx.ellipse(36, -18, 27, 24, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.fillStyle = "#ff7d3c";
-  ctx.beginPath();
-  ctx.moveTo(58, -18);
-  ctx.lineTo(88, -7);
-  ctx.lineTo(57, 4);
-  ctx.closePath();
-  ctx.fill();
-
-  ctx.fillStyle = "#132025";
-  ctx.beginPath();
-  ctx.arc(44, -25, 4, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.strokeStyle = "rgba(255,255,255,0.72)";
-  ctx.lineWidth = 5;
-  ctx.beginPath();
-  ctx.arc(0, 0, 66 + altitudeRatio * 14, 0.18, Math.PI * 1.45);
-  ctx.stroke();
+  if (areDuckAssetsReady()) {
+    drawLayeredDuck(flapWave, fallRatio);
+  } else {
+    drawFallbackMallard(flapWave, fallRatio);
+  }
 
   ctx.restore();
+}
+
+function drawDuckShadow(x, height, scale, altitudeRatio) {
+  const lowAltitude = clamp(1 - altitudeRatio * 2.8, 0, 1);
+  if (lowAltitude <= 0.02) {
+    return;
+  }
+
+  ctx.save();
+  ctx.translate(x, height - 48);
+  ctx.scale(scale * (0.75 + lowAltitude * 0.8), scale * (0.24 + lowAltitude * 0.22));
+  ctx.fillStyle = `rgba(33, 72, 48, ${0.1 + lowAltitude * 0.26})`;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 72, 30, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawLayeredDuck(flapWave, fallRatio) {
+  const beat = (flapWave + 1) * 0.5;
+  const belowNeed = clamp(
+    (state.requiredAscendTapRate - state.tapRate) / state.requiredAscendTapRate,
+    0,
+    1
+  );
+  const isFalling = state.mode === "playing" && fallRatio > 0.65 && state.tapRate < 0.5;
+  const activeArc = 0.2 + state.flapPower * 1.04;
+  const beatMotion = isFalling || state.mode === "landed" ? 0 : beat * activeArc;
+  const softTuck = state.mode === "landed" ? 0.38 : belowNeed * 0.24;
+  const fallTuck = isFalling ? 0.68 : fallRatio * 0.28;
+  const frontAngle = beatMotion + softTuck + fallTuck + 0.02;
+  const backAngle = frontAngle * 0.88 - 0.08;
+  const wingTravel = beatMotion * 96 + fallTuck * 18;
+
+  drawRotatedDuckLayer(DUCK_ASSETS.backWing, backAngle, -wingTravel * 0.1, wingTravel * 0.72);
+  drawDuckLayer(DUCK_ASSETS.body);
+  drawRotatedDuckLayer(DUCK_ASSETS.frontWing, frontAngle, wingTravel * 0.14, wingTravel);
+}
+
+function drawDuckLayer(layer) {
+  ctx.drawImage(
+    layer.image,
+    layer.x - DUCK_SOURCE.anchorX,
+    layer.y - DUCK_SOURCE.anchorY,
+    layer.width,
+    layer.height
+  );
+}
+
+function drawRotatedDuckLayer(layer, angle, offsetX = 0, offsetY = 0) {
+  const pivotX = layer.pivotX - DUCK_SOURCE.anchorX;
+  const pivotY = layer.pivotY - DUCK_SOURCE.anchorY;
+  ctx.save();
+  ctx.translate(pivotX + offsetX, pivotY + offsetY);
+  ctx.rotate(angle);
+  ctx.drawImage(
+    layer.image,
+    layer.x - layer.pivotX,
+    layer.y - layer.pivotY,
+    layer.width,
+    layer.height
+  );
+  ctx.restore();
+}
+
+function drawFallbackMallard(flapWave, fallRatio) {
+  const wingAngle = ((flapWave + 1) * 0.5) * (0.35 + state.flapPower * 0.72) + fallRatio * 0.42;
+
+  ctx.save();
+  ctx.rotate(wingAngle);
+  ctx.fillStyle = "#f1d7a8";
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.bezierCurveTo(-260, -210, -440, -55, -230, 140);
+  ctx.bezierCurveTo(-135, 95, -55, 48, 28, 14);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  ctx.fillStyle = "#f3d6a2";
+  ctx.beginPath();
+  ctx.ellipse(-110, 105, 230, 120, -0.12, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#08a843";
+  ctx.beginPath();
+  ctx.ellipse(165, -70, 102, 96, 0.04, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#ffae00";
+  ctx.beginPath();
+  ctx.ellipse(270, -46, 92, 35, 0.08, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.arc(198, -92, 24, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#23130d";
+  ctx.beginPath();
+  ctx.arc(204, -90, 12, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 function drawAltitudeMeter() {
@@ -265,7 +821,7 @@ function drawAltitudeMeter() {
 
   ctx.save();
   ctx.lineCap = "round";
-  ctx.strokeStyle = "rgba(255,255,255,0.22)";
+  ctx.strokeStyle = "rgba(23, 60, 84, 0.24)";
   ctx.lineWidth = 10;
   ctx.beginPath();
   ctx.moveTo(x, y);
@@ -281,7 +837,7 @@ function drawAltitudeMeter() {
 }
 
 function render() {
-  drawPond();
+  drawSky();
   drawAltitudeMeter();
   drawDuck();
 }
@@ -290,6 +846,7 @@ function updateHud() {
   ui.score.textContent = Math.floor(state.score).toString();
   ui.altitude.textContent = Math.floor(state.altitude).toString();
   ui.tapRate.textContent = state.tapRate.toFixed(1);
+  ui.neededRate.textContent = state.requiredAscendTapRate.toFixed(1);
 }
 
 function frame(now) {
@@ -302,7 +859,7 @@ function frame(now) {
 }
 
 window.addEventListener("resize", resize);
-window.addEventListener("pointerdown", registerTap, { passive: true });
+window.addEventListener("pointerdown", handlePointerDown, { passive: true });
 window.addEventListener("keydown", (event) => {
   if (event.code === "Space" || event.code === "Enter") {
     event.preventDefault();
@@ -313,7 +870,27 @@ ui.restart.addEventListener("click", (event) => {
   event.stopPropagation();
   resetGame(true);
 });
+ui.submitScore.addEventListener("click", (event) => {
+  event.stopPropagation();
+  if (!scoreboard.hasSubmittedCurrentScore) {
+    void submitScore(scoreboard.pendingScore, scoreboard.pendingPeakAltitude);
+  }
+});
+ui.scoreboardRestart.addEventListener("click", (event) => {
+  event.stopPropagation();
+  resetGame(true);
+});
+ui.nicknameInput.addEventListener("keydown", (event) => {
+  if (event.code === "Enter") {
+    event.preventDefault();
+    if (!scoreboard.hasSubmittedCurrentScore) {
+      void submitScore(scoreboard.pendingScore, scoreboard.pendingPeakAltitude);
+    }
+  }
+});
 
+initDuckAssets();
 resize();
 resetGame(false);
+initScoreboard();
 requestAnimationFrame(frame);

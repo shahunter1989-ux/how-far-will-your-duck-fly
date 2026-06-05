@@ -7,7 +7,7 @@
   --line: rgba(255, 255, 255, 0.15);
   --accent: #ffd257;
   --danger: #ff715b;
-  --water: #0f6f7d;
+  --sky: #67c7ff;
 }
 
 * {
@@ -40,8 +40,7 @@ canvas {
   min-height: 520px;
   overflow: hidden;
   background:
-    radial-gradient(circle at 20% 20%, rgba(83, 167, 130, 0.2), transparent 28%),
-    linear-gradient(180deg, #08242a, #102b21 62%, #111a15);
+    linear-gradient(180deg, #5dbfff 0%, #a9e4ff 58%, #dff8ff 100%);
 }
 
 #game {
@@ -59,12 +58,13 @@ canvas {
   right: 12px;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  gap: 6px;
   pointer-events: none;
 }
 
 .hud > div,
 .rules,
+.scoreboard,
 .status-panel {
   border: 1px solid var(--line);
   background: var(--panel);
@@ -72,10 +72,143 @@ canvas {
   backdrop-filter: blur(14px);
 }
 
-.hud > div {
-  min-height: 58px;
-  padding: 9px 10px;
+.scoreboard {
+  position: absolute;
+  z-index: 4;
+  left: 50%;
+  top: 50%;
+  width: min(460px, calc(100vw - 24px));
+  max-height: calc(100svh - 104px);
+  overflow: auto;
+  padding: 12px;
   border-radius: 8px;
+  color: var(--ink);
+  transform: translate(-50%, -50%);
+}
+
+.scoreboard.is-hidden {
+  display: none;
+}
+
+.scoreboard-header,
+.leaderboards,
+.score-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.scoreboard-header {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
+}
+
+.scoreboard-label {
+  display: block;
+  color: var(--muted);
+  font-size: clamp(0.6rem, 2.4vw, 0.72rem);
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.scoreboard-header strong {
+  display: block;
+  overflow: hidden;
+  font-size: clamp(1.1rem, 5vw, 1.55rem);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.score-name {
+  display: block;
+  margin-top: 10px;
+}
+
+.score-name span {
+  display: block;
+  color: var(--muted);
+  font-size: clamp(0.66rem, 2.6vw, 0.78rem);
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.score-name input {
+  width: 100%;
+  min-height: 42px;
+  margin-top: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #12212a;
+  font: inherit;
+  font-weight: 800;
+  padding: 8px 10px;
+}
+
+.scoreboard-status {
+  margin-top: 5px;
+  color: var(--accent);
+  font-size: clamp(0.66rem, 2.6vw, 0.78rem);
+  font-weight: 800;
+}
+
+.leaderboards {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 8px;
+}
+
+.leaderboards article {
+  min-width: 0;
+}
+
+.leaderboards h2 {
+  margin: 0 0 4px;
+  color: var(--accent);
+  font-size: clamp(0.72rem, 2.8vw, 0.86rem);
+}
+
+.leaderboards ol {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: clamp(0.66rem, 2.6vw, 0.78rem);
+}
+
+.leaderboards li {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.score-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 10px;
+}
+
+.score-actions button {
+  min-height: 44px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #201506;
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.score-actions button[disabled] {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.hud > div {
+  min-width: 0;
+  min-height: 58px;
+  padding: 8px 7px;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
 .hud-label {
@@ -89,8 +222,22 @@ canvas {
 .hud strong {
   display: block;
   margin-top: 4px;
-  font-size: clamp(1rem, 4.6vw, 1.55rem);
+  font-size: clamp(0.92rem, 4.1vw, 1.55rem);
   line-height: 1;
+  white-space: nowrap;
+}
+
+.hud strong.hud-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: clamp(0.84rem, 3.4vw, 1.2rem);
+}
+
+.hud-subline {
+  color: var(--muted);
+  font-size: clamp(0.62rem, 2.5vw, 0.75rem);
+  font-weight: 800;
 }
 
 .status-panel {
@@ -103,9 +250,21 @@ canvas {
   border-radius: 8px;
   transform: translateX(-50%);
   text-align: center;
+  overflow: hidden;
+}
+
+@media (max-height: 720px) {
+  .scoreboard {
+    padding: 8px;
+  }
+
+  .leaderboards ol {
+    gap: 0;
+  }
 }
 
 .status-panel.is-hidden {
+  display: none;
   opacity: 0;
   pointer-events: none;
   transform: translate(-50%, 12px);
@@ -114,8 +273,9 @@ canvas {
 
 .status-panel h1 {
   margin: 0;
-  font-size: clamp(1.25rem, 6vw, 2rem);
+  font-size: clamp(1rem, 4.35vw, 1.85rem);
   line-height: 1.05;
+  overflow-wrap: anywhere;
 }
 
 .status-panel p {
@@ -152,9 +312,11 @@ canvas {
 }
 
 .rules div {
+  min-width: 0;
   min-height: 56px;
   padding: 9px 8px;
   background: rgba(255, 255, 255, 0.04);
+  overflow: hidden;
 }
 
 .rules b,
