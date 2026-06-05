@@ -13,15 +13,15 @@ A simple mobile browser game where tapping controls a duck's altitude while it f
 
 Open `index.html` in a browser to play.
 
-## Supabase leaderboard setup
+## Supabase leaderboard
 
-The game works offline until these constants are filled in near the top of `game.js`:
+The live GitHub Pages build is wired to Supabase for online leaderboards. These public constants live near the top of `game.js`:
 
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 - `SCORE_FUNCTION_URL`
 
-To enable online scoreboards:
+To recreate or change the backend:
 
 1. Run `supabase/schema.sql` in your Supabase SQL editor.
 2. Deploy `supabase/functions/submit-score`.

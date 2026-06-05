@@ -21,9 +21,9 @@ const ui = {
   restart: document.getElementById("restart"),
 };
 
-const SUPABASE_URL = "";
-const SUPABASE_ANON_KEY = "";
-const SCORE_FUNCTION_URL = "";
+const SUPABASE_URL = "https://wbsqolqkqbdveurmkqhx.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indic3FvbHFrcWJkdmV1cm1rcWh4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2NjE2NjcsImV4cCI6MjA5NjIzNzY2N30.NVG7GFlw0WOq0uJcoFYE8Rl8DOEd0Wwt6fC8jny0W1U";
+const SCORE_FUNCTION_URL = "https://wbsqolqkqbdveurmkqhx.functions.supabase.co/submit-score";
 
 const RULES = {
   ascendTapRate: 5,
