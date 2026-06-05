@@ -28,12 +28,12 @@ const SCORE_FUNCTION_URL = "https://wbsqolqkqbdveurmkqhx.functions.supabase.co/s
 const RULES = {
   ascendTapRate: 5,
   maxAscendTapRate: 9,
-  maxPressureTapBonus: 1.5,
-  pressureGainPerSecond: 0.12,
-  pressureAltitudeGain: 0.26,
-  pressureOvertapGain: 0.32,
-  pressureDecayPerSecond: 0.24,
-  pressureFallDecayPerSecond: 0.55,
+  pressureBaseGainPerSecond: 0.08,
+  pressureAltitudeGainPerSecond: 0.22,
+  pressureOvertapGainPerTap: 0.05,
+  pressureDecayPerSecond: 0.75,
+  pressureFallDecayPerSecond: 1.8,
+  scoreMinTapRate: 10,
   descendMinTapRate: 1,
   tapWindowMs: 1000,
   fallAfterMs: 750,
@@ -165,12 +165,9 @@ function getBaseAscendTapRate(altitude) {
 }
 
 function getRequiredAscendTapRate(altitude, pressure = state.difficultyPressure) {
-  const pressureBonus =
-    clamp(pressure, 0, 1) * RULES.maxPressureTapBonus;
-  return clamp(
-    getBaseAscendTapRate(altitude) + pressureBonus,
+  return Math.max(
     RULES.ascendTapRate,
-    RULES.maxAscendTapRate + RULES.maxPressureTapBonus
+    getBaseAscendTapRate(altitude) + Math.max(0, pressure)
   );
 }
 
@@ -493,7 +490,7 @@ function resetGame(startNow = false) {
   } else {
     showPanel(
       "How Far Will Your Duck Fly by Wulfzxx.underground",
-      "Keep at least 5 taps per second to climb. Higher altitude and fast climbing raise the needed tap rate.",
+      "Score only grows above 10 taps per second. Higher altitude and fast climbing keep raising the needed tap rate with no fixed cap.",
       "Start"
     );
   }
@@ -543,8 +540,8 @@ function updateTapRate(now) {
 
 function updateDifficultyPressure(dt, hasStoppedFlapping) {
   const altitudeRatio = clamp(state.altitude / RULES.maxAltitude, 0, 1);
-  const requiredRate = getRequiredAscendTapRate(state.altitude);
-  const overTapRatio = clamp((state.tapRate - requiredRate) / 3, 0, 1);
+  const requiredRate = state.requiredAscendTapRate;
+  const tapsAboveNeed = Math.max(0, state.tapRate - requiredRate);
   const isClimbing =
     state.mode === "playing" &&
     !hasStoppedFlapping &&
@@ -553,17 +550,17 @@ function updateDifficultyPressure(dt, hasStoppedFlapping) {
 
   if (isClimbing) {
     const gain =
-      RULES.pressureGainPerSecond +
-      altitudeRatio * RULES.pressureAltitudeGain +
-      overTapRatio * RULES.pressureOvertapGain;
-    state.difficultyPressure = clamp(state.difficultyPressure + gain * dt, 0, 1);
+      RULES.pressureBaseGainPerSecond +
+      altitudeRatio * RULES.pressureAltitudeGainPerSecond +
+      tapsAboveNeed * RULES.pressureOvertapGainPerTap;
+    state.difficultyPressure = Math.max(0, state.difficultyPressure + gain * dt);
     return;
   }
 
   const decay = hasStoppedFlapping
     ? RULES.pressureFallDecayPerSecond
     : RULES.pressureDecayPerSecond;
-  state.difficultyPressure = clamp(state.difficultyPressure - decay * dt, 0, 1);
+  state.difficultyPressure = Math.max(0, state.difficultyPressure - decay * dt);
 }
 
 function simulate(dt, now) {
@@ -571,7 +568,6 @@ function simulate(dt, now) {
 
   const timeSinceTap = now - state.lastTapAt;
   const hasStoppedFlapping = timeSinceTap > RULES.fallAfterMs;
-  updateDifficultyPressure(dt, hasStoppedFlapping);
   state.requiredAscendTapRate = getRequiredAscendTapRate(state.altitude);
   const tapEnergy = clamp(state.tapRate / state.requiredAscendTapRate, 0, 1.5);
   const targetFlapPower = hasStoppedFlapping ? 0 : clamp(tapEnergy, 0.16, 1);
@@ -581,6 +577,8 @@ function simulate(dt, now) {
   state.flapClock += dt * (7.5 + state.tapRate * 2.4) * (0.35 + state.flapPower);
 
   if (state.mode !== "playing") {
+    updateDifficultyPressure(dt, true);
+    state.requiredAscendTapRate = getRequiredAscendTapRate(state.altitude);
     state.verticalVelocity = 0;
     state.skyOffset += dt * 18;
     return;
@@ -598,10 +596,14 @@ function simulate(dt, now) {
     state.verticalVelocity = -RULES.fallPerSecond * 0.78;
   }
 
+  updateDifficultyPressure(dt, hasStoppedFlapping);
+  state.requiredAscendTapRate = getRequiredAscendTapRate(state.altitude);
+
   state.altitude = Math.min(
     RULES.maxAltitude,
     state.altitude + state.verticalVelocity * dt
   );
+  state.requiredAscendTapRate = getRequiredAscendTapRate(state.altitude);
 
   const climbMotion = Math.max(20, Math.abs(state.verticalVelocity) * 0.74);
   const altitudeMotion = state.altitude * 0.18;
@@ -611,7 +613,9 @@ function simulate(dt, now) {
     state.bestHeight = state.altitude;
   }
 
-  state.score += Math.max(0, state.altitude) * RULES.scoreHeightMultiplier * dt;
+  if (state.tapRate > RULES.scoreMinTapRate) {
+    state.score += Math.max(0, state.altitude) * RULES.scoreHeightMultiplier * dt;
+  }
 
   if (state.altitude <= 0) {
     state.altitude = 0;
