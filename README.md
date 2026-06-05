@@ -4,7 +4,7 @@ A simple mobile browser game where tapping controls a duck's altitude while it f
 
 ## Rules
 
-- Ascend: meet the current needed tap rate, starting near 5 taps per second and rising to 8 taps per second at max altitude.
+- Ascend: meet the current needed tap rate, starting near 5 taps per second, rising to 9 at max altitude, and temporarily increasing during sustained fast climbs.
 - Descend: tap below the current needed rate.
 - Safe landing: no taps for 0.75 seconds sends the duck gliding down.
 - Run complete: altitude reaches zero and the duck lands safely.
