@@ -103,10 +103,11 @@ async function upsertBestScore(
   return Number(data) || score;
 }
 
-async function getTopThree(
+async function getTopScores(
   supabase: ReturnType<typeof createClient>,
   periodType: PeriodType,
   periodKey: string,
+  limit: number,
 ) {
   const { data, error } = await supabase
     .from("leaderboard_scores")
@@ -115,7 +116,7 @@ async function getTopThree(
     .eq("period_key", periodKey)
     .order("score", { ascending: false })
     .order("played_at", { ascending: true })
-    .limit(3);
+    .limit(limit);
 
   if (error) {
     throw error;
@@ -160,8 +161,8 @@ Deno.serve(async (req) => {
     );
 
     const [dailyTop, weeklyTop] = await Promise.all([
-      getTopThree(supabase, "daily", payload.dailyPeriodKey),
-      getTopThree(supabase, "weekly", payload.weeklyPeriodKey),
+      getTopScores(supabase, "daily", payload.dailyPeriodKey, 5),
+      getTopScores(supabase, "weekly", payload.weeklyPeriodKey, 3),
     ]);
 
     return jsonResponse({

@@ -48,9 +48,13 @@
           <input id="nickname-input" type="text" maxlength="18" autocomplete="nickname" inputmode="text">
         </label>
         <div class="scoreboard-status" id="scoreboard-status">Scoreboard offline</div>
+        <div class="scoreboard-timers" aria-label="Scoreboard reset timers">
+          <span id="daily-reset">Today resets in --h --m</span>
+          <span id="weekly-reset">Week resets in --d --h</span>
+        </div>
         <div class="leaderboards">
           <article>
-            <h2>Today Top 3</h2>
+            <h2>Today Top 5</h2>
             <ol id="daily-board">
               <li>Waiting for scores</li>
             </ol>

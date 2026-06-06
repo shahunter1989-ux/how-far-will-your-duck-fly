@@ -11,6 +11,8 @@ const ui = {
   finalPeak: document.getElementById("final-peak"),
   nicknameInput: document.getElementById("nickname-input"),
   scoreboardStatus: document.getElementById("scoreboard-status"),
+  dailyReset: document.getElementById("daily-reset"),
+  weeklyReset: document.getElementById("weekly-reset"),
   dailyBoard: document.getElementById("daily-board"),
   weeklyBoard: document.getElementById("weekly-board"),
   submitScore: document.getElementById("submit-score"),
@@ -45,6 +47,11 @@ const RULES = {
   slowDescentPerSecond: 18,
   fallPerSecond: 70,
   scoreHeightMultiplier: 0.12,
+};
+
+const SCOREBOARD_LIMITS = {
+  daily: 5,
+  weekly: 3,
 };
 
 const CLOUDS = [
@@ -226,6 +233,33 @@ function getLocalMondayKey(date = new Date()) {
   return getLocalDateKey(monday);
 }
 
+function getNextLocalMidnight(date = new Date()) {
+  const next = new Date(date);
+  next.setHours(24, 0, 0, 0);
+  return next;
+}
+
+function getNextLocalMondayMidnight(date = new Date()) {
+  const next = getNextLocalMidnight(date);
+  const daysUntilMonday = (8 - next.getDay()) % 7;
+  next.setDate(next.getDate() + daysUntilMonday);
+  return next;
+}
+
+function formatDailyReset(msUntilReset) {
+  const totalMinutes = Math.max(0, Math.ceil(msUntilReset / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${String(hours).padStart(2, "0")}h ${String(minutes).padStart(2, "0")}m`;
+}
+
+function formatWeeklyReset(msUntilReset) {
+  const totalHours = Math.max(0, Math.ceil(msUntilReset / 3600000));
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  return `${days}d ${String(hours).padStart(2, "0")}h`;
+}
+
 function bestStorageKey(periodType, periodKey) {
   return `${STORAGE_KEYS.bestPrefix}.${periodType}.${periodKey}.${scoreboard.deviceId}`;
 }
@@ -278,9 +312,40 @@ function updatePersonalBests() {
   scoreboard.weekBest = loadLocalBest("weekly", scoreboard.weeklyPeriodKey);
 }
 
-function renderBoard(list, rows) {
+function updateResetTimers(now = new Date()) {
+  const dailyMs = getNextLocalMidnight(now) - now;
+  const weeklyMs = getNextLocalMondayMidnight(now) - now;
+  ui.dailyReset.textContent = `Today resets in ${formatDailyReset(dailyMs)}`;
+  ui.weeklyReset.textContent = `Week resets in ${formatWeeklyReset(weeklyMs)}`;
+}
+
+function handleScoreboardTimerTick() {
+  if (ui.scoreboard.classList.contains("is-hidden")) {
+    return;
+  }
+
+  const previousDailyKey = scoreboard.dailyPeriodKey;
+  const previousWeeklyKey = scoreboard.weeklyPeriodKey;
+  updatePeriodKeys();
+
+  if (
+    previousDailyKey !== scoreboard.dailyPeriodKey ||
+    previousWeeklyKey !== scoreboard.weeklyPeriodKey
+  ) {
+    updatePersonalBests();
+    scoreboard.dailyTop = [];
+    scoreboard.weeklyTop = [];
+    updateScoreboardUI();
+    void refreshOnlineScoreboard();
+    return;
+  }
+
+  updateResetTimers();
+}
+
+function renderBoard(list, rows, limit) {
   list.innerHTML = "";
-  const entries = rows.slice(0, 3);
+  const entries = rows.slice(0, limit);
 
   if (!entries.length) {
     const empty = document.createElement("li");
@@ -304,17 +369,18 @@ function updateScoreboardUI() {
   }
   ui.scoreboardStatus.textContent = scoreboard.status;
   ui.submitScore.disabled = scoreboard.hasSubmittedCurrentScore;
-  renderBoard(ui.dailyBoard, scoreboard.dailyTop);
-  renderBoard(ui.weeklyBoard, scoreboard.weeklyTop);
+  updateResetTimers();
+  renderBoard(ui.dailyBoard, scoreboard.dailyTop, SCOREBOARD_LIMITS.daily);
+  renderBoard(ui.weeklyBoard, scoreboard.weeklyTop, SCOREBOARD_LIMITS.weekly);
 }
 
-async function fetchLeaderboard(periodType, periodKey) {
+async function fetchLeaderboard(periodType, periodKey, limit) {
   const url = new URL(`${SUPABASE_URL.replace(/\/$/, "")}/rest/v1/leaderboard_scores`);
   url.searchParams.set("select", "nickname,score,peak_altitude,played_at");
   url.searchParams.set("period_type", `eq.${periodType}`);
   url.searchParams.set("period_key", `eq.${periodKey}`);
   url.searchParams.set("order", "score.desc,played_at.asc");
-  url.searchParams.set("limit", "3");
+  url.searchParams.set("limit", String(limit));
 
   const response = await fetch(url.toString(), {
     headers: {
@@ -343,8 +409,8 @@ async function refreshOnlineScoreboard() {
   try {
     setScoreboardStatus("Loading scores");
     const [dailyTop, weeklyTop] = await Promise.all([
-      fetchLeaderboard("daily", scoreboard.dailyPeriodKey),
-      fetchLeaderboard("weekly", scoreboard.weeklyPeriodKey),
+      fetchLeaderboard("daily", scoreboard.dailyPeriodKey, SCOREBOARD_LIMITS.daily),
+      fetchLeaderboard("weekly", scoreboard.weeklyPeriodKey, SCOREBOARD_LIMITS.weekly),
     ]);
     scoreboard.dailyTop = dailyTop;
     scoreboard.weeklyTop = weeklyTop;
@@ -973,4 +1039,5 @@ initDuckAssets();
 resize();
 resetGame(false);
 initScoreboard();
+window.setInterval(handleScoreboardTimerTick, 1000);
 requestAnimationFrame(frame);
