@@ -15,6 +15,7 @@ const ui = {
   weeklyBoard: document.getElementById("weekly-board"),
   submitScore: document.getElementById("submit-score"),
   scoreboardRestart: document.getElementById("scoreboard-restart"),
+  introScreen: document.getElementById("intro-screen"),
   panel: document.getElementById("status-panel"),
   title: document.getElementById("state-title"),
   message: document.getElementById("state-message"),
@@ -128,6 +129,7 @@ const STORAGE_KEYS = {
 
 let lastFrame = performance.now();
 let view = { width: 720, height: 1080, dpr: 1 };
+let introActive = true;
 
 function initDuckAssets() {
   for (const layer of Object.values(DUCK_ASSETS)) {
@@ -454,6 +456,11 @@ function hideScoreboard() {
   ui.scoreboard.classList.add("is-hidden");
 }
 
+function hideIntro() {
+  introActive = false;
+  ui.introScreen.classList.add("is-hidden");
+}
+
 function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const rect = canvas.getBoundingClientRect();
@@ -487,6 +494,8 @@ function resetGame(startNow = false) {
   if (startNow) {
     registerTap();
     hidePanel();
+  } else if (introActive) {
+    hidePanel();
   } else {
     showPanel(
       "How Far Will Your Duck Fly by Wulfzxx.underground",
@@ -507,6 +516,14 @@ function hidePanel() {
   ui.panel.classList.add("is-hidden");
 }
 
+function startFromIntro() {
+  if (!introActive) {
+    return;
+  }
+  hideIntro();
+  resetGame(true);
+}
+
 function registerTap() {
   const now = performance.now();
   if (state.mode === "ready") {
@@ -524,6 +541,11 @@ function registerTap() {
 }
 
 function handlePointerDown(event) {
+  if (introActive) {
+    startFromIntro();
+    return;
+  }
+
   if (event.target.closest(".scoreboard, .status-panel")) {
     return;
   }
@@ -917,6 +939,10 @@ window.addEventListener("pointerdown", handlePointerDown, { passive: true });
 window.addEventListener("keydown", (event) => {
   if (event.code === "Space" || event.code === "Enter") {
     event.preventDefault();
+    if (introActive) {
+      startFromIntro();
+      return;
+    }
     registerTap();
   }
 });
