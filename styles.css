@@ -92,7 +92,7 @@ canvas {
   left: 12px;
   right: 12px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
   pointer-events: none;
 }
@@ -133,7 +133,7 @@ canvas {
 }
 
 .scoreboard-header {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: center;
 }
 
@@ -356,7 +356,7 @@ canvas {
   right: 12px;
   bottom: max(12px, env(safe-area-inset-bottom));
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1px;
   overflow: hidden;
   border-radius: 8px;
@@ -394,5 +394,24 @@ canvas {
     margin: 0 auto;
     border-left: 1px solid rgba(255, 255, 255, 0.08);
     border-right: 1px solid rgba(255, 255, 255, 0.08);
+  }
+}
+
+@media (max-width: 390px) {
+  .hud {
+    gap: 4px;
+  }
+
+  .hud > div {
+    min-height: 54px;
+    padding: 7px 5px;
+  }
+
+  .scoreboard-header {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .rules div {
+    padding: 8px 5px;
   }
 }

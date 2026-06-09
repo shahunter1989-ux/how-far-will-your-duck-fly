@@ -7,11 +7,15 @@ A simple mobile browser game where tapping controls a duck's altitude while it f
 - Ascend: meet the current needed tap rate, starting near 5 taps per second and rising with altitude.
 - Difficulty: fast climbing keeps raising the needed tap rate with no fixed cap, then cools down when you slow or fall.
 - Score: points only increase while tapping faster than 10 taps per second.
+- Boost rings: fly through golden rings to add points and build the combo multiplier.
+- Storm clouds: avoid dark clouds because they break combo, slow the duck, and add difficulty pressure.
+- Wind lanes: updrafts help the duck climb while downdrafts push it down.
+- Combo: boost rings raise the multiplier up to x4.0; dropping below the scoring tap rate cools it back down.
 - Descend: tap below the current needed rate.
 - Safe landing: no taps for 0.75 seconds sends the duck gliding down.
 - Run complete: altitude reaches zero and the duck lands safely.
-- Score: increases over time based on current altitude.
-- Leaderboards: daily and Monday-reset weekly top-three boards appear after each round, backed by Supabase when configured.
+- Score: increases over time based on current altitude and combo multiplier.
+- Leaderboards: daily Top 5 and Monday-reset weekly Top 3 boards appear after each round, backed by Supabase when configured.
 
 Open `index.html` in a browser to play.
 

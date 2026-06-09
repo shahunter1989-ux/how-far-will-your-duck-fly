@@ -6,9 +6,12 @@ const ui = {
   altitude: document.getElementById("altitude"),
   tapRate: document.getElementById("tap-rate"),
   neededRate: document.getElementById("needed-rate"),
+  combo: document.getElementById("combo"),
   scoreboard: document.getElementById("scoreboard"),
   finalScore: document.getElementById("final-score"),
   finalPeak: document.getElementById("final-peak"),
+  finalCombo: document.getElementById("final-combo"),
+  finalRings: document.getElementById("final-rings"),
   nicknameInput: document.getElementById("nickname-input"),
   scoreboardStatus: document.getElementById("scoreboard-status"),
   dailyReset: document.getElementById("daily-reset"),
@@ -47,6 +50,14 @@ const RULES = {
   slowDescentPerSecond: 18,
   fallPerSecond: 70,
   scoreHeightMultiplier: 0.12,
+  cleanComboDecayPerSecond: 0.35,
+  boostComboGain: 0.45,
+  maxComboMultiplier: 4,
+  boostScoreBonus: 45,
+  stormPressurePenalty: 0.85,
+  stormVelocityPenalty: 22,
+  updraftLiftPerSecond: 18,
+  downdraftDropPerSecond: 24,
 };
 
 const SCOREBOARD_LIMITS = {
@@ -111,6 +122,15 @@ const state = {
   flapPower: 0,
   flightClock: 0,
   skyOffset: 0,
+  windLift: 0,
+  comboMultiplier: 1,
+  bestComboMultiplier: 1,
+  ringsCollected: 0,
+  hazardHits: 0,
+  arcadeObjects: [],
+  nextArcadeSpawnAt: 160,
+  boostFlash: 0,
+  hazardFlash: 0,
 };
 
 const scoreboard = {
@@ -364,6 +384,8 @@ function renderBoard(list, rows, limit) {
 function updateScoreboardUI() {
   ui.finalScore.textContent = scoreboard.pendingScore.toString();
   ui.finalPeak.textContent = scoreboard.pendingPeakAltitude.toString();
+  ui.finalCombo.textContent = `x${state.bestComboMultiplier.toFixed(1)}`;
+  ui.finalRings.textContent = state.ringsCollected.toString();
   if (document.activeElement !== ui.nicknameInput) {
     ui.nicknameInput.value = scoreboard.nickname;
   }
@@ -555,6 +577,15 @@ function resetGame(startNow = false) {
   state.flapPower = 0;
   state.flightClock = 0;
   state.skyOffset = 0;
+  state.windLift = 0;
+  state.comboMultiplier = 1;
+  state.bestComboMultiplier = 1;
+  state.ringsCollected = 0;
+  state.hazardHits = 0;
+  state.arcadeObjects = [];
+  state.nextArcadeSpawnAt = 160;
+  state.boostFlash = 0;
+  state.hazardFlash = 0;
   hideScoreboard();
 
   if (startNow) {
@@ -565,7 +596,7 @@ function resetGame(startNow = false) {
   } else {
     showPanel(
       "How Far Will Your Duck Fly by Wulfzxx.underground",
-      "Score only grows above 10 taps per second. Higher altitude and fast climbing keep raising the needed tap rate with no fixed cap.",
+      "Score only grows above 10 taps per second. Use boost rings, avoid storm clouds, and fight wind while the needed tap rate keeps rising.",
       "Start"
     );
   }
@@ -651,6 +682,160 @@ function updateDifficultyPressure(dt, hasStoppedFlapping) {
   state.difficultyPressure = Math.max(0, state.difficultyPressure - decay * dt);
 }
 
+function createArcadeObject(type) {
+  const { width } = view;
+  const centerBias = width * (0.38 + Math.random() * 0.24);
+  const wideX = width * (0.18 + Math.random() * 0.64);
+  const id = `${type}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+
+  if (type === "boost") {
+    return {
+      id,
+      type,
+      x: centerBias,
+      y: -88,
+      radius: 48,
+      rotation: Math.random() * Math.PI,
+      collected: false,
+      pulse: Math.random() * Math.PI * 2,
+    };
+  }
+
+  if (type === "hazard") {
+    return {
+      id,
+      type,
+      x: wideX,
+      y: -96,
+      radius: 64,
+      hit: false,
+      wobble: Math.random() * Math.PI * 2,
+    };
+  }
+
+  return {
+    id,
+    type: "wind",
+    windType: Math.random() > 0.45 ? "updraft" : "downdraft",
+    x: wideX,
+    y: -120,
+    width: Math.min(210, width * 0.48),
+    height: 170,
+    phase: Math.random() * Math.PI * 2,
+  };
+}
+
+function spawnArcadeObjects() {
+  if (state.mode !== "playing") {
+    return;
+  }
+
+  while (state.skyOffset >= state.nextArcadeSpawnAt) {
+    const roll = Math.random();
+    const type = roll < 0.44 ? "boost" : roll < 0.72 ? "wind" : "hazard";
+    state.arcadeObjects.push(createArcadeObject(type));
+    state.nextArcadeSpawnAt += 150 + Math.random() * 120;
+  }
+}
+
+function getDuckScreenPosition() {
+  const { width, height } = view;
+  const altitudeRatio = state.altitude / RULES.maxAltitude;
+  return {
+    x: width * 0.5,
+    y:
+      height * 0.5 -
+      altitudeRatio * height * 0.12 +
+      Math.sin(state.flightClock * 2.2) * (5 + state.flapPower * 7),
+  };
+}
+
+function updateCombo(dt) {
+  if (state.mode !== "playing" || state.tapRate <= RULES.scoreMinTapRate) {
+    state.comboMultiplier = Math.max(
+      1,
+      state.comboMultiplier - RULES.cleanComboDecayPerSecond * dt
+    );
+  }
+
+  if (state.comboMultiplier > state.bestComboMultiplier) {
+    state.bestComboMultiplier = state.comboMultiplier;
+  }
+}
+
+function collectBoost() {
+  state.ringsCollected += 1;
+  state.comboMultiplier = Math.min(
+    RULES.maxComboMultiplier,
+    state.comboMultiplier + RULES.boostComboGain
+  );
+  state.score += RULES.boostScoreBonus * state.comboMultiplier;
+  state.verticalVelocity += 18;
+  state.boostFlash = 0.42;
+}
+
+function hitHazard() {
+  state.hazardHits += 1;
+  state.comboMultiplier = 1;
+  state.difficultyPressure += RULES.stormPressurePenalty;
+  state.verticalVelocity -= RULES.stormVelocityPenalty;
+  state.flapPower = Math.max(0, state.flapPower - 0.28);
+  state.hazardFlash = 0.45;
+}
+
+function updateArcadeObjects(dt, scrollSpeed) {
+  spawnArcadeObjects();
+  state.windLift = 0;
+  state.boostFlash = Math.max(0, state.boostFlash - dt);
+  state.hazardFlash = Math.max(0, state.hazardFlash - dt);
+
+  const duck = getDuckScreenPosition();
+  const activeObjects = [];
+
+  for (const object of state.arcadeObjects) {
+    object.y += scrollSpeed * dt;
+
+    if (object.type === "boost") {
+      object.rotation += dt * 2.4;
+      object.pulse += dt * 7;
+      const distance = Math.hypot(object.x - duck.x, object.y - duck.y);
+      if (!object.collected && distance < object.radius + 44) {
+        object.collected = true;
+        collectBoost();
+      }
+    }
+
+    if (object.type === "hazard") {
+      object.wobble += dt * 3;
+      const distance = Math.hypot(object.x - duck.x, object.y - duck.y);
+      if (!object.hit && distance < object.radius + 38) {
+        object.hit = true;
+        hitHazard();
+      }
+    }
+
+    if (object.type === "wind") {
+      object.phase += dt * 5;
+      const insideX = Math.abs(object.x - duck.x) < object.width * 0.5;
+      const insideY = Math.abs(object.y - duck.y) < object.height * 0.5;
+      if (insideX && insideY) {
+        state.windLift +=
+          object.windType === "updraft"
+            ? RULES.updraftLiftPerSecond
+            : -RULES.downdraftDropPerSecond;
+      }
+    }
+
+    const expired = object.y > view.height + 140 || object.collected || object.hit;
+    if (!expired) {
+      activeObjects.push(object);
+    }
+  }
+
+  state.arcadeObjects = activeObjects;
+  updateCombo(dt);
+}
+
 function simulate(dt, now) {
   updateTapRate(now);
 
@@ -669,6 +854,7 @@ function simulate(dt, now) {
     state.requiredAscendTapRate = getRequiredAscendTapRate(state.altitude);
     state.verticalVelocity = 0;
     state.skyOffset += dt * 18;
+    updateArcadeObjects(dt, 18);
     return;
   }
 
@@ -687,22 +873,29 @@ function simulate(dt, now) {
   updateDifficultyPressure(dt, hasStoppedFlapping);
   state.requiredAscendTapRate = getRequiredAscendTapRate(state.altitude);
 
+  const climbMotion = Math.max(20, Math.abs(state.verticalVelocity) * 0.74);
+  const altitudeMotion = state.altitude * 0.18;
+  const scrollSpeed = climbMotion + altitudeMotion;
+  updateArcadeObjects(dt, scrollSpeed);
+  state.verticalVelocity += state.windLift;
+  state.skyOffset += dt * scrollSpeed;
+
   state.altitude = Math.min(
     RULES.maxAltitude,
     state.altitude + state.verticalVelocity * dt
   );
   state.requiredAscendTapRate = getRequiredAscendTapRate(state.altitude);
 
-  const climbMotion = Math.max(20, Math.abs(state.verticalVelocity) * 0.74);
-  const altitudeMotion = state.altitude * 0.18;
-  state.skyOffset += dt * (climbMotion + altitudeMotion);
-
   if (state.altitude > state.bestHeight) {
     state.bestHeight = state.altitude;
   }
 
   if (state.tapRate > RULES.scoreMinTapRate) {
-    state.score += Math.max(0, state.altitude) * RULES.scoreHeightMultiplier * dt;
+    state.score +=
+      Math.max(0, state.altitude) *
+      RULES.scoreHeightMultiplier *
+      state.comboMultiplier *
+      dt;
   }
 
   if (state.altitude <= 0) {
@@ -819,16 +1012,131 @@ function drawGround(width, height, altitudeRatio) {
   ctx.restore();
 }
 
+function drawArcadeObjects() {
+  for (const object of state.arcadeObjects) {
+    if (object.type === "boost") {
+      drawBoostRing(object);
+    } else if (object.type === "hazard") {
+      drawHazardCloud(object);
+    } else {
+      drawWindLane(object);
+    }
+  }
+
+  drawFeedbackFlash();
+}
+
+function drawBoostRing(object) {
+  const pulse = 1 + Math.sin(object.pulse) * 0.08;
+
+  ctx.save();
+  ctx.translate(object.x, object.y);
+  ctx.rotate(object.rotation);
+  ctx.scale(pulse, pulse);
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = "rgba(255, 238, 95, 0.95)";
+  ctx.shadowColor = "rgba(255, 210, 45, 0.8)";
+  ctx.shadowBlur = 18;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, object.radius, object.radius * 0.72, 0, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+  ctx.beginPath();
+  ctx.ellipse(0, -2, object.radius * 0.78, object.radius * 0.52, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawHazardCloud(object) {
+  const wobble = Math.sin(object.wobble) * 5;
+
+  ctx.save();
+  ctx.translate(object.x + wobble, object.y);
+  ctx.fillStyle = "rgba(44, 65, 91, 0.86)";
+  ctx.shadowColor = "rgba(20, 34, 52, 0.5)";
+  ctx.shadowBlur = 15;
+  ctx.beginPath();
+  ctx.ellipse(-44, 16, 43, 26, 0, 0, Math.PI * 2);
+  ctx.ellipse(-10, -2, 45, 34, 0, 0, Math.PI * 2);
+  ctx.ellipse(34, 13, 52, 29, 0, 0, Math.PI * 2);
+  ctx.ellipse(66, 22, 31, 20, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "rgba(255, 222, 88, 0.9)";
+  ctx.lineWidth = 4;
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(-4, 42);
+  ctx.lineTo(-20, 74);
+  ctx.lineTo(2, 66);
+  ctx.lineTo(-10, 96);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawWindLane(object) {
+  const isUpdraft = object.windType === "updraft";
+  const color = isUpdraft ? "93, 232, 145" : "84, 165, 255";
+  const arrowDirection = isUpdraft ? -1 : 1;
+
+  ctx.save();
+  ctx.translate(object.x, object.y);
+  ctx.globalAlpha = 0.48;
+  ctx.fillStyle = `rgba(${color}, 0.14)`;
+  ctx.strokeStyle = `rgba(${color}, 0.8)`;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.roundRect(
+    -object.width * 0.5,
+    -object.height * 0.5,
+    object.width,
+    object.height,
+    28
+  );
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.globalAlpha = 0.82;
+  ctx.lineCap = "round";
+  for (let i = -1; i <= 1; i += 1) {
+    const x = i * object.width * 0.24 + Math.sin(object.phase + i) * 8;
+    const y = Math.sin(object.phase * 1.3 + i) * 16;
+    ctx.beginPath();
+    ctx.moveTo(x, y + arrowDirection * 42);
+    ctx.lineTo(x, y - arrowDirection * 42);
+    ctx.lineTo(x - 12, y - arrowDirection * 24);
+    ctx.moveTo(x, y - arrowDirection * 42);
+    ctx.lineTo(x + 12, y - arrowDirection * 24);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawFeedbackFlash() {
+  if (state.boostFlash <= 0 && state.hazardFlash <= 0) {
+    return;
+  }
+
+  ctx.save();
+  if (state.boostFlash > 0) {
+    ctx.fillStyle = `rgba(255, 228, 90, ${state.boostFlash * 0.16})`;
+    ctx.fillRect(0, 0, view.width, view.height);
+  }
+  if (state.hazardFlash > 0) {
+    ctx.fillStyle = `rgba(255, 92, 84, ${state.hazardFlash * 0.2})`;
+    ctx.fillRect(0, 0, view.width, view.height);
+  }
+  ctx.restore();
+}
+
 function drawDuck() {
   const { width, height } = view;
   const altitudeRatio = state.altitude / RULES.maxAltitude;
   const fallRatio = clamp(-state.verticalVelocity / RULES.fallPerSecond, 0, 1);
   const flapWave = Math.sin(state.flapClock);
-  const x = width * 0.5;
-  const y =
-    height * 0.5 -
-    altitudeRatio * height * 0.12 +
-    Math.sin(state.flightClock * 2.2) * (5 + state.flapPower * 7);
+  const { x, y } = getDuckScreenPosition();
   const shadowScale = Math.min(width, height) / 410;
   const duckScale = (Math.min(width, height) / 2250) * (0.95 + altitudeRatio * 0.12);
   const tilt = state.mode === "landed"
@@ -980,6 +1288,7 @@ function drawAltitudeMeter() {
 
 function render() {
   drawSky();
+  drawArcadeObjects();
   drawAltitudeMeter();
   drawDuck();
 }
@@ -989,6 +1298,7 @@ function updateHud() {
   ui.altitude.textContent = Math.floor(state.altitude).toString();
   ui.tapRate.textContent = state.tapRate.toFixed(1);
   ui.neededRate.textContent = state.requiredAscendTapRate.toFixed(1);
+  ui.combo.textContent = `x${state.comboMultiplier.toFixed(1)}`;
 }
 
 function frame(now) {

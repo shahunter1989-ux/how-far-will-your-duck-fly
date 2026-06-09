@@ -28,6 +28,10 @@
             <span class="hud-subline">need <span id="needed-rate">5.0</span>/s</span>
           </strong>
         </div>
+        <div>
+          <span class="hud-label">Combo</span>
+          <strong><span id="combo">x1.0</span></strong>
+        </div>
       </section>
 
       <canvas id="game" width="720" height="1080" aria-label="Sky flight game area"></canvas>
@@ -41,6 +45,14 @@
           <div>
             <span class="scoreboard-label">Peak</span>
             <strong><span id="final-peak">0</span> m</strong>
+          </div>
+          <div>
+            <span class="scoreboard-label">Best Combo</span>
+            <strong id="final-combo">x1.0</strong>
+          </div>
+          <div>
+            <span class="scoreboard-label">Boosts</span>
+            <strong id="final-rings">0</strong>
           </div>
         </header>
         <label class="score-name">
@@ -74,13 +86,14 @@
 
       <aside class="status-panel" id="status-panel">
         <h1 id="state-title">How Far Will Your Duck Fly by Wulfzxx.underground</h1>
-        <p id="state-message">Score only grows above 10 taps per second. Higher altitude and fast climbing keep raising the needed tap rate with no fixed cap.</p>
+        <p id="state-message">Score only grows above 10 taps per second. Use boost rings, avoid storm clouds, and fight wind while the needed tap rate keeps rising.</p>
         <button id="restart" type="button">Start</button>
       </aside>
 
       <section class="rules" aria-label="Game thresholds">
         <div><b>Ascend</b><span>meet need</span></div>
-        <div><b>Descend</b><span>below need</span></div>
+        <div><b>Boost</b><span>hit rings</span></div>
+        <div><b>Avoid</b><span>storm clouds</span></div>
         <div><b>Land</b><span>0 taps for 0.75s</span></div>
       </section>
     </main>
