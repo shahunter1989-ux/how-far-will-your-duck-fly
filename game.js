@@ -50,6 +50,8 @@ const RULES = {
   slowDescentPerSecond: 18,
   fallPerSecond: 70,
   scoreHeightMultiplier: 0.12,
+  steerEasePerSecond: 14,
+  steerMarginRatio: 0.16,
   cleanComboDecayPerSecond: 0.35,
   boostComboGain: 0.45,
   maxComboMultiplier: 4,
@@ -122,6 +124,8 @@ const state = {
   flapPower: 0,
   flightClock: 0,
   skyOffset: 0,
+  duckXRatio: 0.5,
+  targetDuckXRatio: 0.5,
   windLift: 0,
   comboMultiplier: 1,
   bestComboMultiplier: 1,
@@ -560,6 +564,8 @@ function resize() {
   canvas.width = Math.round(view.width * dpr);
   canvas.height = Math.round(view.height * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  state.duckXRatio = clamp(state.duckXRatio, 0, 1);
+  state.targetDuckXRatio = clamp(state.targetDuckXRatio, 0, 1);
 }
 
 function resetGame(startNow = false) {
@@ -577,6 +583,8 @@ function resetGame(startNow = false) {
   state.flapPower = 0;
   state.flightClock = 0;
   state.skyOffset = 0;
+  state.duckXRatio = 0.5;
+  state.targetDuckXRatio = 0.5;
   state.windLift = 0;
   state.comboMultiplier = 1;
   state.bestComboMultiplier = 1;
@@ -596,7 +604,7 @@ function resetGame(startNow = false) {
   } else {
     showPanel(
       "How Far Will Your Duck Fly by Wulfzxx.underground",
-      "Score only grows above 10 taps per second. Use boost rings, avoid storm clouds, and fight wind while the needed tap rate keeps rising.",
+      "Score only grows above 10 taps per second. Drag left or right to steer through boost rings and away from storm clouds.",
       "Start"
     );
   }
@@ -637,8 +645,18 @@ function registerTap() {
   state.flapPower = Math.min(1, state.flapPower + 0.34);
 }
 
+function updateSteeringFromPointer(event) {
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width) {
+    return;
+  }
+
+  state.targetDuckXRatio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+}
+
 function handlePointerDown(event) {
   if (introActive) {
+    updateSteeringFromPointer(event);
     startFromIntro();
     return;
   }
@@ -646,7 +664,20 @@ function handlePointerDown(event) {
   if (event.target.closest(".scoreboard, .status-panel")) {
     return;
   }
+  updateSteeringFromPointer(event);
   registerTap();
+}
+
+function handlePointerMove(event) {
+  if (introActive || state.mode !== "playing") {
+    return;
+  }
+
+  if (event.target.closest(".scoreboard, .status-panel")) {
+    return;
+  }
+
+  updateSteeringFromPointer(event);
 }
 
 function updateTapRate(now) {
@@ -741,8 +772,9 @@ function spawnArcadeObjects() {
 function getDuckScreenPosition() {
   const { width, height } = view;
   const altitudeRatio = state.altitude / RULES.maxAltitude;
+  const margin = width * RULES.steerMarginRatio;
   return {
-    x: width * 0.5,
+    x: margin + state.duckXRatio * Math.max(1, width - margin * 2),
     y:
       height * 0.5 -
       altitudeRatio * height * 0.12 +
@@ -838,6 +870,9 @@ function updateArcadeObjects(dt, scrollSpeed) {
 
 function simulate(dt, now) {
   updateTapRate(now);
+  state.duckXRatio +=
+    (state.targetDuckXRatio - state.duckXRatio) *
+    Math.min(1, dt * RULES.steerEasePerSecond);
 
   const timeSinceTap = now - state.lastTapAt;
   const hasStoppedFlapping = timeSinceTap > RULES.fallAfterMs;
@@ -1312,6 +1347,7 @@ function frame(now) {
 
 window.addEventListener("resize", resize);
 window.addEventListener("pointerdown", handlePointerDown, { passive: true });
+window.addEventListener("pointermove", handlePointerMove, { passive: true });
 window.addEventListener("keydown", (event) => {
   if (event.code === "Space" || event.code === "Enter") {
     event.preventDefault();

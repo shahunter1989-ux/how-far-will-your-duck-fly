@@ -4,6 +4,7 @@ A simple mobile browser game where tapping controls a duck's altitude while it f
 
 ## Rules
 
+- Controls: tap to flap and drag left or right to steer the duck sideways.
 - Ascend: meet the current needed tap rate, starting near 5 taps per second and rising with altitude.
 - Difficulty: fast climbing keeps raising the needed tap rate with no fixed cap, then cools down when you slow or fall.
 - Score: points only increase while tapping faster than 10 taps per second.
